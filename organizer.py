@@ -321,8 +321,10 @@ def print_plan(st, moves, folder):
 
     for src, dest in moves[:MAX_PLAN_ROWS]:
         name = str(src.relative_to(folder))
-        if len(name) > 42:
-            name = name[:39] + "..."
+        # Truncate below the column width, so there is always a gap before
+        # the destination column even for a name that fills it exactly.
+        if len(name) > 40:
+            name = name[:37] + "..."
         # Show the new name too, but only when we had to rename the file.
         if dest.name == src.name:
             target = dest.parent.name + "/"
