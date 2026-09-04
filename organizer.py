@@ -3,8 +3,13 @@ FolderSorter - tidy up a messy folder by sorting files into folders by type.
 
 Looks at every file in a folder, decides which category it belongs to based
 on its extension (Images, Documents, Music, Videos, ...), and moves it into
-a folder of that name. Name clashes are resolved by adding " (1)", " (2)",
-so nothing is ever overwritten.
+a folder of that name. With --by-extension it makes one folder per file
+type instead - PDF, PNG, DOCX - which is finer-grained but busier. Name
+clashes are resolved by adding " (1)", " (2)", so nothing is ever
+overwritten.
+
+There is also a window version with tick boxes for picking exactly what
+moves: run gui.py, which calls straight into this file.
 
 By default it is careful: it prints the full plan first and asks for
 confirmation before touching anything. Every run writes a small log file,
@@ -18,6 +23,7 @@ Usage examples:
     python organizer.py C:\\Users\\me\\Downloads
     python organizer.py ~/Downloads --dry-run
     python organizer.py ~/Downloads -y
+    python organizer.py ~/Downloads --by-extension
     python organizer.py ~/Downloads --recursive
     python organizer.py ~/Downloads --undo
 """
@@ -130,19 +136,26 @@ def build_extension_map():
     return mapping
 
 
-def category_for(path, ext_map):
-    """Return the category folder name for a file, or 'Other' if unknown."""
+def destination_name(path, ext_map, by_extension=False):
+    """Return the name of the folder a file belongs in.
+
+    In the default mode that is a category like 'Images'; with
+    `by_extension` it is the file type in capitals, like 'PNG'. Files with
+    no extension at all end up in 'Other' either way.
+    """
+    if by_extension:
+        suffix = path.suffix.lstrip(".")
+        return suffix.upper() if suffix else OTHER
     return ext_map.get(path.suffix.lower(), OTHER)
 
 
 def collect_files(folder, recursive, skip):
-    """Collect the files in `folder` that should be sorted.
+    """Collect the files in `folder` that could be sorted.
 
-    Skips anything already sitting in a category folder (so running twice
-    is harmless), hidden files and folders, OS bookkeeping files, and the
-    paths in `skip` - which is how the script avoids moving itself.
+    Skips hidden files and folders, OS bookkeeping files, and the paths in
+    `skip` - which is how the script avoids moving itself. Files that are
+    already in the right place are weeded out later, by plan_moves.
     """
-    category_dirs = set(CATEGORIES) | {OTHER}
     entries = folder.rglob("*") if recursive else folder.iterdir()
 
     files = []
@@ -150,9 +163,7 @@ def collect_files(folder, recursive, skip):
         if not entry.is_file():
             continue
         rel = entry.relative_to(folder)
-        # Already sorted, or tucked away in a hidden folder like .git
-        if len(rel.parts) > 1 and rel.parts[0] in category_dirs:
-            continue
+        # Skip anything tucked away in a hidden folder like .git
         if any(part.startswith(".") for part in rel.parts):
             continue
         if entry.name.lower() in ALWAYS_SKIP:
@@ -180,13 +191,20 @@ def unique_destination(dest, taken):
     return candidate
 
 
-def plan_moves(files, folder, ext_map):
-    """Work out where every file should go. Returns a list of (src, dest)."""
+def plan_moves(files, folder, ext_map, by_extension=False):
+    """Work out where every file should go. Returns a list of (src, dest).
+
+    A file that already sits in the folder it would be moved to is left
+    out entirely. That one check is what makes a second run a no-op,
+    whichever mode you are in.
+    """
     taken = set()
     moves = []
     for src in files:
-        category = category_for(src, ext_map)
-        dest = unique_destination(folder / category / src.name, taken)
+        target_dir = folder / destination_name(src, ext_map, by_extension)
+        if src.parent == target_dir:
+            continue
+        dest = unique_destination(target_dir / src.name, taken)
         moves.append((src, dest))
     return moves
 
@@ -209,11 +227,12 @@ def apply_moves(moves):
     return done, failures
 
 
-def write_log(folder, done):
+def write_log(folder, done, by_extension=False):
     """Record what was moved, so --undo can put it all back."""
     log = {
         "when": datetime.now().isoformat(timespec="seconds"),
         "folder": str(folder),
+        "mode": "extension" if by_extension else "category",
         "moves": [{"from": str(src), "to": str(dest)} for src, dest in done],
     }
     log_path = folder / LOG_NAME
@@ -221,9 +240,20 @@ def write_log(folder, done):
     return log_path
 
 
-def prune_empty_categories(folder):
-    """Remove category folders left empty after an undo."""
-    for name in list(CATEGORIES) + [OTHER]:
+def read_log(folder):
+    """Load a folder's undo log, or None if there isn't a usable one."""
+    log_path = folder / LOG_NAME
+    if not log_path.exists():
+        return None
+    try:
+        return json.loads(log_path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+
+
+def prune_empty_dirs(folder, names):
+    """Remove any of the named subfolders that are now empty."""
+    for name in names:
         target = folder / name
         try:
             if target.is_dir() and not any(target.iterdir()):
@@ -232,35 +262,23 @@ def prune_empty_categories(folder):
             pass
 
 
-def undo(st, folder):
-    """Move everything from the last run back where it came from."""
-    log_path = folder / LOG_NAME
-    if not log_path.exists():
-        print("  " + st("Nothing to undo - no log file in this folder.", YELLOW))
-        print("  " + st("A log is only written after files are actually moved.", DIM))
-        return
+def undo_moves(folder, log):
+    """Put every file in `log` back where it came from.
 
-    try:
-        log = json.loads(log_path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        print("  " + st("Could not read the log file - it looks damaged.", RED))
-        return
-
-    when = log.get("when", "?")
-    entries = log.get("moves", [])
-    print("  {}   {}".format(st("Undoing", DIM), st(when, BOLD)))
-    print("  {}     {} {}".format(st("Files", DIM), len(entries),
-                                  st("recorded", DIM)))
-    print()
-
+    Returns (restored, missing, failed). The log is deleted only when
+    nothing failed, so a partial undo can still be retried afterwards.
+    """
     restored = 0
     missing = 0
     failed = 0
     taken = set()
+    used_dirs = set()
+
     # Reverse order, so files land back in the order they were taken.
-    for entry in reversed(entries):
+    for entry in reversed(log.get("moves", [])):
         current = Path(entry["to"])
         original = Path(entry["from"])
+        used_dirs.add(current.parent.name)
         if not current.exists():
             missing += 1
             continue
@@ -272,12 +290,33 @@ def undo(st, folder):
         except OSError:
             failed += 1
 
-    prune_empty_categories(folder)
+    # The folder names come from the log itself, so this cleans up after
+    # an --by-extension run (PDF, PNG, ...) just as well as a category one.
+    prune_empty_dirs(folder, used_dirs)
     if not failed:
         try:
-            log_path.unlink()
+            (folder / LOG_NAME).unlink()
         except OSError:
             pass
+
+    return restored, missing, failed
+
+
+def undo(st, folder):
+    """Print-and-report wrapper around undo_moves, for the command line."""
+    log = read_log(folder)
+    if log is None:
+        print("  " + st("Nothing to undo - no usable log in this folder.", YELLOW))
+        print("  " + st("A log is only written after files are actually moved.", DIM))
+        return
+
+    entries = log.get("moves", [])
+    print("  {}   {}".format(st("Undoing", DIM), st(log.get("when", "?"), BOLD)))
+    print("  {}     {} {}".format(st("Files", DIM), len(entries),
+                                  st("recorded", DIM)))
+    print()
+
+    restored, missing, failed = undo_moves(folder, log)
 
     dot = st("\u00b7", GRAY)
     line = "  {} {}".format(st("\u2713", GREEN),
@@ -302,14 +341,16 @@ def print_logo(st, use_color):
     print()
 
 
-def print_info(st, folder, moves, recursive):
+def print_info(st, folder, moves, recursive, by_extension):
     """Print a compact info block above the plan."""
     scope = "including subfolders" if recursive else "top level only"
-    categories = len({dest.parent.name for _, dest in moves})
+    grouping = "by file type" if by_extension else "by category"
+    folders = len({dest.parent.name for _, dest in moves})
     dot = st("\u00b7", GRAY)
     print("  {}   {}".format(st("Folder", DIM), st(str(folder), BOLD)))
-    print("  {}     {} files to sort   {}   {} categories   {}   {}".format(
-        st("Plan", DIM), len(moves), dot, categories, dot, st(scope, GRAY)))
+    print("  {}     {} files   {}   {} folders {}   {}   {}".format(
+        st("Plan", DIM), len(moves), dot, folders, st(grouping, GRAY),
+        dot, st(scope, GRAY)))
     print()
 
 
@@ -398,6 +439,8 @@ def main():
                         help="skip the confirmation prompt")
     parser.add_argument("--undo", action="store_true",
                         help="put back everything the last run moved")
+    parser.add_argument("-e", "--by-extension", action="store_true",
+                        help="one folder per file type (PDF, PNG) instead of categories")
     parser.add_argument("-r", "--recursive", action="store_true",
                         help="also pull files out of subfolders")
     parser.add_argument("--no-color", action="store_true",
@@ -437,7 +480,7 @@ def main():
     ext_map = build_extension_map()
     skip = {Path(__file__).resolve()}
     files = collect_files(folder, args.recursive, skip)
-    moves = plan_moves(files, folder, ext_map)
+    moves = plan_moves(files, folder, ext_map, args.by_extension)
 
     if not moves:
         print("  " + st("Nothing to do - this folder is already tidy.", GREEN))
@@ -445,7 +488,7 @@ def main():
         print()
         return
 
-    print_info(st, folder, moves, args.recursive)
+    print_info(st, folder, moves, args.recursive, args.by_extension)
     print_plan(st, moves, folder)
 
     # --- Move, but only with permission ---
@@ -457,7 +500,7 @@ def main():
         done, failures = apply_moves(moves)
         duration = time.time() - start
         if done:
-            write_log(folder, done)
+            write_log(folder, done, args.by_extension)
         print_summary(st, folder, len(done), failures, duration)
     else:
         print("  " + st("Cancelled - nothing was moved.", YELLOW))
