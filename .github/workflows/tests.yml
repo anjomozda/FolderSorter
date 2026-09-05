@@ -8,6 +8,9 @@ jobs:
   test:
     name: ${{ matrix.os }} · Python ${{ matrix.python-version }}
     runs-on: ${{ matrix.os }}
+    # A window test that wedges should fail in minutes, not sit
+    # for the six hour default.
+    timeout-minutes: 15
 
     strategy:
       # Report every combination, rather than stopping at the first failure.

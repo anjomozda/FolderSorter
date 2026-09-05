@@ -8,6 +8,7 @@ Run from the project root with:
     python -m unittest discover -s tests -v
 """
 
+import os
 import sys
 import tempfile
 import unittest
@@ -24,11 +25,36 @@ try:
 except Exception:                                     # pragma: no cover
     TK_WORKS = False
 
+# An escape hatch for a CI machine where Tk starts but behaves badly.
+SKIP_GUI = os.environ.get("FOLDERSORTER_SKIP_GUI_TESTS") == "1"
+
 if TK_WORKS:
     import gui
 
+_ROOT = None
 
-@unittest.skipUnless(TK_WORKS, "tkinter cannot open a display here")
+
+def setUpModule():
+    """One Tk root for the whole module.
+
+    A root per test is cheap on a desktop but crawls on a build machine
+    with no real display, so the tests share one and take a Toplevel each.
+    """
+    global _ROOT
+    if TK_WORKS and not SKIP_GUI:
+        _ROOT = tk.Tk()
+        _ROOT.withdraw()
+
+
+def tearDownModule():
+    global _ROOT
+    if _ROOT is not None:
+        _ROOT.destroy()
+        _ROOT = None
+
+
+@unittest.skipUnless(TK_WORKS and not SKIP_GUI,
+                     "tkinter cannot open a usable display here")
 class WindowTest(unittest.TestCase):
     """Base class: a hidden window pointed at a throwaway folder."""
 
@@ -49,7 +75,7 @@ class WindowTest(unittest.TestCase):
         self.real_titlebar = gui.enable_dark_titlebar
         gui.enable_dark_titlebar = lambda root: None
 
-        self.root = tk.Tk()
+        self.root = tk.Toplevel(_ROOT)
         self.root.withdraw()
         self.win = gui.SorterWindow(self.root)
         self.win.by_extension.set(False)
