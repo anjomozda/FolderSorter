@@ -30,3 +30,9 @@ jobs:
       # window tests skip themselves where Tk cannot open a display.
       - name: Run the tests
         run: python -m unittest discover -s tests -v
+        env:
+          # The Windows runner has no interactive desktop. Tk does not fail
+          # there, it just never returns, so the window tests are turned off
+          # and only the logic runs. Linux sorts itself out: Tk raises, and
+          # the window tests skip themselves.
+          FOLDERSORTER_SKIP_GUI_TESTS: ${{ runner.os == 'Windows' && '1' || '0' }}

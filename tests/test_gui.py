@@ -16,17 +16,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-try:
-    import tkinter as tk
-
-    _probe = tk.Tk()
-    _probe.destroy()
-    TK_WORKS = True
-except Exception:                                     # pragma: no cover
-    TK_WORKS = False
-
-# An escape hatch for a CI machine where Tk starts but behaves badly.
+# Checked before anything touches Tk. On a Windows build machine there is
+# no interactive desktop, and creating a window does not fail there - it
+# simply never returns, so the whole suite wedges. That has to be settled
+# without opening a window at all, which is why this comes first.
 SKIP_GUI = os.environ.get("FOLDERSORTER_SKIP_GUI_TESTS") == "1"
+
+if SKIP_GUI:
+    TK_WORKS = False
+else:
+    try:
+        import tkinter as tk
+
+        _probe = tk.Tk()
+        _probe.destroy()
+        TK_WORKS = True
+    except Exception:                                 # pragma: no cover
+        TK_WORKS = False
 
 if TK_WORKS:
     import gui
@@ -37,11 +43,11 @@ _ROOT = None
 def setUpModule():
     """One Tk root for the whole module.
 
-    A root per test is cheap on a desktop but crawls on a build machine
-    with no real display, so the tests share one and take a Toplevel each.
+    A root per test is cheap on a desktop but slow elsewhere, so the tests
+    share one and take a Toplevel each.
     """
     global _ROOT
-    if TK_WORKS and not SKIP_GUI:
+    if TK_WORKS:
         _ROOT = tk.Tk()
         _ROOT.withdraw()
 
@@ -53,8 +59,7 @@ def tearDownModule():
         _ROOT = None
 
 
-@unittest.skipUnless(TK_WORKS and not SKIP_GUI,
-                     "tkinter cannot open a usable display here")
+@unittest.skipUnless(TK_WORKS, "no usable display for tkinter here")
 class WindowTest(unittest.TestCase):
     """Base class: a hidden window pointed at a throwaway folder."""
 

@@ -135,7 +135,9 @@ In a real terminal the logo has a cyan→blue gradient and the destinations are 
 python -m unittest discover -s tests -v
 ```
 
-Standard library `unittest`, nothing to install. Every test works inside its own temporary folder, so the suite never touches a real folder or the remembered settings. The window tests build the window hidden and call its methods directly; where Tk cannot open a display they skip themselves, which is how the same suite passes on the Linux CI runner.
+Standard library `unittest`, nothing to install. Every test works inside its own temporary folder, so the suite never touches a real folder or the remembered settings. The window tests build the window hidden and call its methods directly.
+
+CI runs the logic tests on Windows and Linux. The window tests run locally, and are switched off on the build machines, which have no interactive desktop: on Linux Tk raises and they skip themselves, and on Windows Tk does not fail but never returns, so `FOLDERSORTER_SKIP_GUI_TESTS=1` turns them off before anything tries to open a window. Set that variable yourself if you ever need to run only the logic.
 
 ## ⚠️ Safety
 
