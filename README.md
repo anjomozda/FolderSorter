@@ -9,7 +9,8 @@ It comes in two halves: a **window** for picking exactly what moves, and a **com
 ## Features
 
 - Two ways to group files: **by category** (Images, Documents, Music, Videos, Archives, Installers, Code, Fonts, Shortcuts, Other) or **by file type** — one folder per extension
-- **Pick what moves.** The window lists everything grouped by destination, with tick boxes on both the group and each individual file, and shows how much space each group takes
+- **Pick what moves.** The window lists everything grouped by destination, with tick boxes on both the group and each individual file, a colour per destination, and how much space each group takes
+- **A dark window that looks like it belongs on the desktop** — flat surfaces, a real dark title bar, and rows that light up under the mouse, all from plain `tkinter`
 - **Undo.** Every sort writes a small log file, so the whole thing can be put back exactly as it was
 - **Never overwrites.** A name clash becomes `photo (1).jpg`, `photo (2).jpg`, …
 - **Safe to run twice.** Files already sitting in the right folder are left alone
@@ -36,7 +37,7 @@ python gui.py
 
 On Windows use `pythonw gui.py` to launch it without a console window sitting behind it.
 
-Pick a folder with **Browse…**, choose whether to group by category or by file type, untick anything you want left where it is, then press **Sort**. It asks once more before moving anything. **Undo last run** puts everything back. The folder and options you used are remembered for next time.
+Pick a folder with **Browse**, choose whether to group by category or by file type, untick anything you want left where it is, then press **Sort**. It asks once more before moving anything. **Undo last run** puts everything back. The folder and options you used are remembered for next time.
 
 ### The command line
 
@@ -121,6 +122,8 @@ Moving files around in bulk is the kind of thing you want to be able to take bac
 ## How it works
 
 `organizer.py` holds all of the logic and the command line; `gui.py` only draws the window and calls into it. Nothing about deciding, moving or undoing is written twice.
+
+The dark look is not a library. `gui.py` starts from ttk's `clam` theme — the only built-in one whose colours can all be overridden — and repaints it from a single palette dictionary. Flattening `lightcolor` and `darkcolor` into the background is what removes the raised 3D edges that make a default Tk window look twenty years old. Two details need help from outside ttk: the title bar is asked to go dark through the Windows DWM API, and the colour dots are drawn pixel by pixel into a `PhotoImage`, because a Treeview tag colours a whole row and so cannot colour a single character.
 
 The category table is flattened once into a plain `{".png": "Images", ...}` dictionary, so classifying a file is a single dict lookup on `Path.suffix`. In `--by-extension` mode the folder name is just that suffix in capitals. Anything unrecognised — or with no extension at all — goes to `Other/`.
 
