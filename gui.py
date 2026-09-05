@@ -49,6 +49,7 @@ PALETTE = {
     "accent_hi": "#60A5FA",  # hovered
     "accent_lo": "#2563EB",  # pressed
     "on_accent": "#FFFFFF",
+    "select": "#2C3A57",    # row with the keyboard focus
 }
 
 # A colour per destination folder, shown as a dot in front of the name.
@@ -181,7 +182,7 @@ def apply_theme(root):
                     fieldbackground=p["surface"], foreground=p["text"],
                     borderwidth=0, relief="flat", rowheight=32, font=FONT_BODY)
     style.map("Treeview",
-              background=[("selected", p["surface"])],
+              background=[("selected", p["select"])],
               foreground=[("selected", p["text"])])
     style.configure("Treeview.Heading", background=p["bg"],
                     foreground=p["muted"], relief="flat", borderwidth=0,
@@ -359,8 +360,10 @@ class SorterWindow:
         wrap = tk.Frame(outer, bg=p["surface"])
         wrap.pack(fill="both", expand=True, padx=1, pady=1)
 
+        # "browse" rather than "none": the keyboard needs a focused row,
+        # and it is what makes the arrow keys work without any code.
         self.tree = ttk.Treeview(wrap, columns=("count", "size"),
-                                 selectmode="none")
+                                 selectmode="browse")
         self.tree.heading("#0", text="   DESTINATION FOLDER  /  FILE", anchor="w")
         self.tree.heading("count", text="FILES", anchor="e")
         self.tree.heading("size", text="SIZE", anchor="e")
@@ -382,6 +385,14 @@ class SorterWindow:
         self.tree.bind("<Button-1>", self.on_click)
         self.tree.bind("<Motion>", self.on_motion)
         self.tree.bind("<Leave>", lambda e: self._set_hover(None))
+
+        # Up, down, left and right already work in "browse" mode.
+        self.tree.bind("<space>", self.on_space)
+        self.tree.bind("<Return>", lambda e: self.do_sort())
+        for combo in ("<Control-a>", "<Control-A>"):
+            self.tree.bind(combo, lambda e: self.set_all(True) or "break")
+        for combo in ("<Control-d>", "<Control-D>"):
+            self.tree.bind(combo, lambda e: self.set_all(False) or "break")
 
         # Shown over the list when there is nothing in it.
         self.empty = ttk.Label(wrap, style="Empty.TLabel", anchor="center")
@@ -485,6 +496,14 @@ class SorterWindow:
                                  text="{}  {}".format(CHECKED, self.labels[i]),
                                  image=self.blank,
                                  values=("", human_size(self.sizes[i])))
+
+        # Put the focus on the first row, so the keyboard works straight
+        # away instead of only after the list has been clicked.
+        rows = self.tree.get_children()
+        if rows:
+            self.tree.focus(rows[0])
+            self.tree.selection_set(rows[0])
+        self.tree.focus_set()
         self.refresh()
 
     # ------------------------------------------------------------------
@@ -499,6 +518,13 @@ class SorterWindow:
         if self.tree.identify_element(event.x, event.y) == "Treeitem.indicator":
             return
         self.toggle(item)
+
+    def on_space(self, event):
+        """Space ticks or unticks whichever row has the keyboard focus."""
+        item = self.tree.focus()
+        if item:
+            self.toggle(item)
+        return "break"
 
     def on_motion(self, event):
         """Highlight whichever row the mouse is over."""
@@ -650,7 +676,16 @@ class SorterWindow:
 
 def main():
     root = tk.Tk()
-    SorterWindow(root)
+    window = SorterWindow(root)
+
+    # An optional folder argument, which is what makes the Windows
+    # "Send to" entry useful: right-click any folder, send it here, and
+    # the window opens on it instead of on the remembered one.
+    if len(sys.argv) > 1:
+        folder = Path(sys.argv[1]).expanduser()
+        if folder.is_dir():
+            window.set_folder(folder)
+
     root.mainloop()
 
 

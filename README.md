@@ -1,16 +1,19 @@
 # FolderSorter
 
+[![tests](https://github.com/anjomozda/FolderSorter/actions/workflows/tests.yml/badge.svg)](https://github.com/anjomozda/FolderSorter/actions/workflows/tests.yml)
+
 A small, dependency-free Python tool that tidies up a messy folder. It looks at every file, works out where it belongs from its extension, and moves it into a folder of that name — `Images/`, `Documents/`, `Music/`, or, if you prefer, `PDF/`, `PNG/`, `DOCX/`.
 
 It comes in two halves: a **window** for picking exactly what moves, and a **command line** version for when you just want it done. Both are careful by default, and every run can be reversed with one click or one `--undo`.
 
-![The FolderSorter window](screenshot.png)
+![Ticking what to move, sorting, and undoing it](demo.gif)
 
 ## Features
 
 - Two ways to group files: **by category** (Images, Documents, Music, Videos, Archives, Installers, Code, Fonts, Shortcuts, Other) or **by file type** — one folder per extension
 - **Pick what moves.** The window lists everything grouped by destination, with tick boxes on both the group and each individual file, a colour per destination, and how much space each group takes
 - **A dark window that looks like it belongs on the desktop** — flat surfaces, a real dark title bar, and rows that light up under the mouse, all from plain `tkinter`
+- **Works from the keyboard.** Space ticks the highlighted row, arrows move, `Ctrl+A` and `Ctrl+D` select everything or nothing, `Enter` sorts
 - **Undo.** Every sort writes a small log file, so the whole thing can be put back exactly as it was
 - **Never overwrites.** A name clash becomes `photo (1).jpg`, `photo (2).jpg`, …
 - **Safe to run twice.** Files already sitting in the right folder are left alone
@@ -35,9 +38,26 @@ No third-party packages. `tkinter`, which draws the window, ships with Python. W
 python gui.py
 ```
 
-On Windows use `pythonw gui.py` to launch it without a console window sitting behind it.
+On Windows use `pythonw gui.py` to launch it without a console window sitting behind it, or just double-click **`FolderSorter.bat`**.
 
 Pick a folder with **Browse**, choose whether to group by category or by file type, untick anything you want left where it is, then press **Sort**. It asks once more before moving anything. **Undo last run** puts everything back. The folder and options you used are remembered for next time.
+
+![The window, grouping by category](screenshot.png)
+
+#### From the keyboard
+
+| Key | What it does |
+| --- | --- |
+| `Space` | Tick or untick the highlighted row |
+| `Up` / `Down` | Move between rows |
+| `Right` / `Left` | Open or close a group |
+| `Ctrl` + `A` | Tick everything |
+| `Ctrl` + `D` | Untick everything |
+| `Enter` | Sort |
+
+#### Right-click any folder
+
+`gui.py` takes an optional folder, so `python gui.py "C:\Users\me\Downloads"` opens straight on it. Copy a shortcut to `FolderSorter.bat` into your `SendTo` folder - press `Win`+`R`, type `shell:sendto`, and drop it there - and you can right-click any folder, choose **Send to -> FolderSorter**, and the window opens on exactly that folder.
 
 ### The command line
 
@@ -109,6 +129,14 @@ In a real terminal the logo has a cyan→blue gradient and the destinations are 
   Undo with:  python organizer.py "C:\Users\me\Desktop" --undo
 ```
 
+## Tests
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+Standard library `unittest`, nothing to install. Every test works inside its own temporary folder, so the suite never touches a real folder or the remembered settings. The window tests build the window hidden and call its methods directly; where Tk cannot open a display they skip themselves, which is how the same suite passes on the Linux CI runner.
+
 ## ⚠️ Safety
 
 Moving files around in bulk is the kind of thing you want to be able to take back, so:
@@ -130,3 +158,7 @@ The category table is flattened once into a plain `{".png": "Images", ...}` dict
 The complete list of `(source, destination)` pairs is built **before** anything moves. Destinations are checked against both the disk and the names already handed out during this run, which is what stops two files called `slika.png` from different subfolders from colliding with each other. A file that already sits in the folder it would be moved to is dropped from the plan entirely — that one check is what makes a second run report "nothing to do" instead of building `Images/Images/`, in either mode.
 
 Files are moved with `shutil.move` rather than `os.rename`, so moving across drives works, and each move is wrapped individually — a single locked file gets reported instead of aborting the run. The successful moves are then written to `.foldersorter-log.json`, and undo walks that list backwards, moving every file back to the path it came from and removing the folders it emptied. Because those folder names are read back out of the log rather than from a fixed list, undo cleans up after a `PDF/`-style run just as well as a `Documents/`-style one.
+
+## License
+
+MIT - see [LICENSE](LICENSE).
